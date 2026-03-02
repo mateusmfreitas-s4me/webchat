@@ -299,6 +299,63 @@
       cursor: pointer;\
       font-weight: 600;\
     }\
+    #gc-webchat-root #attachBtn {\
+      width: 36px;\
+      height: 36px;\
+      border: none;\
+      border-radius: 999px;\
+      background: transparent;\
+      cursor: pointer;\
+      display: grid;\
+      place-items: center;\
+      color: rgba(0,0,0,.55);\
+      font-size: 20px;\
+      flex-shrink: 0;\
+    }\
+    #gc-webchat-root #attachBtn:hover { background: rgba(0,0,0,.06); }\
+    #gc-webchat-root #fileInput { display: none; }\
+\
+    #gc-webchat-root .uploadRow {\
+      display: flex;\
+      align-items: center;\
+      gap: 8px;\
+      margin: 6px 0;\
+      padding: 8px 12px;\
+      background: rgba(0,0,0,.04);\
+      border-radius: 10px;\
+      font-size: 12px;\
+      color: rgba(0,0,0,.60);\
+    }\
+    #gc-webchat-root .uploadRow .uploadName {\
+      flex: 1;\
+      overflow: hidden;\
+      text-overflow: ellipsis;\
+      white-space: nowrap;\
+    }\
+    #gc-webchat-root .uploadRow .uploadBar {\
+      width: 60px;\
+      height: 4px;\
+      background: rgba(0,0,0,.10);\
+      border-radius: 2px;\
+      overflow: hidden;\
+      flex-shrink: 0;\
+    }\
+    #gc-webchat-root .uploadRow .uploadBar .uploadFill {\
+      height: 100%;\
+      width: 0%;\
+      background: var(--g-primary);\
+      border-radius: 2px;\
+      transition: width .2s ease;\
+    }\
+    #gc-webchat-root .uploadRow.done { opacity: .5; }\
+\
+    #gc-webchat-root .bubble img.chatImage {\
+      max-width: 100%;\
+      max-height: 260px;\
+      border-radius: 8px;\
+      display: block;\
+      cursor: pointer;\
+    }\
 \
     #gc-webchat-root #confirmOverlay {\
       position: fixed;\
@@ -380,6 +437,8 @@
       '  <div id="chatMessages"></div>' +
       '  <div id="typing">' + T_TYPING + "</div>" +
       '  <footer id="chatComposer">' +
+      '    <button id="attachBtn" aria-label="Anexar arquivo" type="button">\ud83d\udcce</button>' +
+      '    <input id="fileInput" type="file" accept="image/*" multiple />' +
       '    <input id="chatInput" placeholder="' + T_PLACEHOLDER + '" />' +
       '    <button id="sendBtn">' + T_SEND + "</button>" +
       "  </footer>" +
@@ -408,9 +467,15 @@
     var elConfirmOverlay = root.querySelector("#confirmOverlay");
     var elCancelClose = root.querySelector("#cancelClose");
     var elConfirmClose = root.querySelector("#confirmClose");
+    var elAttachBtn = root.querySelector("#attachBtn");
+    var elFileInput = root.querySelector("#fileInput");
 
     var seenMsgIds = new Set();
     var introShown = false;
+
+    // Upload state
+    var uploadBatch = [];  // { key, fileName, done, el }
+    var uploadCaption = "";
 
     var state = {
       ready: false,
@@ -599,6 +664,193 @@
         T_END_NOTICE + "\n" + formatTimestampBrasilia(new Date());
       elMsgs.appendChild(el);
       elMsgs.scrollTop = elMsgs.scrollHeight;
+    }
+
+    // ===== Upload / Imagens =====
+    function generateUploadKey(file) {
+      return file.name + "_" + file.size + "_" + Date.now();
+    }
+
+    function createUploadUI(key, fileName) {
+      var row = document.createElement("div");
+      row.className = "uploadRow";
+      row.setAttribute("data-upload-key", key);
+
+      var name = document.createElement("span");
+      name.className = "uploadName";
+      name.textContent = fileName;
+
+      var bar = document.createElement("div");
+      bar.className = "uploadBar";
+
+      var fill = document.createElement("div");
+      fill.className = "uploadFill";
+
+      bar.appendChild(fill);
+      row.appendChild(name);
+      row.appendChild(bar);
+      elMsgs.appendChild(row);
+      elMsgs.scrollTop = elMsgs.scrollHeight;
+
+      return row;
+    }
+
+    function updateUploadUIByKey(key, percent) {
+      for (var i = 0; i < uploadBatch.length; i++) {
+        if (uploadBatch[i].key === key && uploadBatch[i].el) {
+          var fill = uploadBatch[i].el.querySelector(".uploadFill");
+          if (fill) fill.style.width = Math.min(percent, 100) + "%";
+          break;
+        }
+      }
+    }
+
+    function markUploadDoneByKey(key) {
+      for (var i = 0; i < uploadBatch.length; i++) {
+        if (uploadBatch[i].key === key) {
+          uploadBatch[i].done = true;
+          if (uploadBatch[i].el) {
+            uploadBatch[i].el.classList.add("done");
+            var fill = uploadBatch[i].el.querySelector(".uploadFill");
+            if (fill) fill.style.width = "100%";
+          }
+          break;
+        }
+      }
+    }
+
+    function removeUploadUI() {
+      for (var i = 0; i < uploadBatch.length; i++) {
+        if (uploadBatch[i].el && uploadBatch[i].el.parentNode) {
+          uploadBatch[i].el.remove();
+        }
+      }
+    }
+
+    function finalizeBatchSendIfComplete() {
+      var allDone = uploadBatch.every(function (item) { return item.done; });
+      if (!allDone) return;
+
+      console.log("[GENESYS] All uploads done, sending message commit");
+      removeUploadUI();
+
+      var payload = uploadCaption ? { message: uploadCaption } : {};
+      Genesys(
+        "command",
+        "MessagingService.sendMessage",
+        payload,
+        function () {
+          console.log("[GENESYS] sendMessage (after upload) success");
+        },
+        function (err) {
+          console.error("[GENESYS] sendMessage (after upload) error", err);
+        }
+      );
+
+      uploadBatch = [];
+      uploadCaption = "";
+    }
+
+    function uploadImages(filesArray, caption) {
+      ensureFreshSessionIfNeeded().then(function () {
+        return startConversationIfNeeded();
+      }).then(function (ok) {
+        if (!ok) {
+          console.warn("[GENESYS] Cannot upload: conversation not started");
+          return;
+        }
+
+        uploadCaption = caption || "";
+        uploadBatch = [];
+
+        var fileList = [];
+        filesArray.forEach(function (file) {
+          var key = generateUploadKey(file);
+          var el = createUploadUI(key, file.name);
+          uploadBatch.push({ key: key, fileName: file.name, done: false, el: el });
+          fileList.push(file);
+        });
+
+        console.log("[GENESYS] Calling MessagingService.requestUpload", fileList.length, "files");
+
+        Genesys(
+          "command",
+          "MessagingService.requestUpload",
+          { file: fileList },
+          function () {
+            console.log("[GENESYS] requestUpload success");
+          },
+          function (err) {
+            console.error("[GENESYS] requestUpload error", err);
+            removeUploadUI();
+            uploadBatch = [];
+          }
+        );
+      });
+    }
+
+    function isImageAttachment(att) {
+      var mime = String(att.mime || att.mediaType || att.contentType || "").toLowerCase();
+      return mime.indexOf("image") === 0;
+    }
+
+    function extractAttachments(m) {
+      // Genesys pode retornar attachments em vários formatos
+      var atts = m.attachments || m.content || [];
+      if (!Array.isArray(atts)) atts = [];
+      return atts.filter(function (a) {
+        var type = String(a.contentType || a.type || "").toLowerCase();
+        return type === "attachment" || a.url || a.mediaUrl || (a.mime && a.mime.indexOf("image") === 0);
+      });
+    }
+
+    function renderAttachmentBubble(from, att, ts) {
+      var url = att.url || att.mediaUrl || (att.media && att.media.url) || "";
+      if (!url) return;
+
+      removeIntro();
+
+      if (isImageAttachment(att)) {
+        var row = document.createElement("div");
+        row.className = "msgRow " + from;
+
+        var wrap = document.createElement("div");
+
+        var bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.style.padding = "4px";
+        bubble.style.background = "transparent";
+
+        var img = document.createElement("img");
+        img.className = "chatImage";
+        img.src = url;
+        img.alt = att.filename || att.name || "Imagem";
+        img.addEventListener("click", function () {
+          window.open(url, "_blank");
+        });
+
+        bubble.appendChild(img);
+
+        var meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = ts || formatTimestampBrasilia(new Date());
+
+        addToTranscript(from, "[imagem] " + url, meta.textContent);
+
+        wrap.appendChild(bubble);
+        wrap.appendChild(meta);
+        row.appendChild(wrap);
+        elMsgs.appendChild(row);
+        elMsgs.scrollTop = elMsgs.scrollHeight;
+      } else {
+        // Arquivo não-imagem: renderiza como link
+        var fileName = att.filename || att.name || "Arquivo";
+        addBubble({
+          from: from,
+          text: fileName + "\n" + url,
+          time: ts,
+        });
+      }
     }
 
     function resetConversationNow() {
@@ -1012,6 +1264,42 @@
       resetConversationNow();
     });
 
+    // Upload progress
+    Genesys("subscribe", "MessagingService.uploading", function (evt) {
+      var percent = (evt && evt.data && evt.data.progress) || (evt && evt.progress) || 0;
+      var fileName = (evt && evt.data && evt.data.fileName) || (evt && evt.fileName) || "";
+
+      // Tentar encontrar no batch pelo nome do arquivo
+      var keyFound = null;
+      for (var i = 0; i < uploadBatch.length; i++) {
+        if (!uploadBatch[i].done && (uploadBatch[i].fileName === fileName || !keyFound)) {
+          keyFound = uploadBatch[i].key;
+          if (uploadBatch[i].fileName === fileName) break;
+        }
+      }
+      if (keyFound) {
+        updateUploadUIByKey(keyFound, percent);
+      }
+    });
+
+    // Upload de arquivo individual concluído
+    Genesys("subscribe", "MessagingService.fileUploaded", function (evt) {
+      var fileName = (evt && evt.data && evt.data.fileName) || (evt && evt.fileName) || "";
+      console.log("[GENESYS] fileUploaded", fileName);
+
+      var keyFound = null;
+      for (var i = 0; i < uploadBatch.length; i++) {
+        if (!uploadBatch[i].done && (uploadBatch[i].fileName === fileName || !keyFound)) {
+          keyFound = uploadBatch[i].key;
+          if (uploadBatch[i].fileName === fileName) break;
+        }
+      }
+      if (keyFound) {
+        markUploadDoneByKey(keyFound);
+        finalizeBatchSendIfComplete();
+      }
+    });
+
     Genesys(
       "subscribe",
       "MessagingService.messagesReceived",
@@ -1042,8 +1330,6 @@
               ? extractQuickRepliesFromStructured(m)
               : [];
 
-          if (!text && !buttons.length) return;
-
           var tsRaw =
             m.time ||
             m.timestamp ||
@@ -1056,6 +1342,16 @@
           var ts = tsRaw
             ? formatTimestampBrasilia(tsRaw)
             : formatTimestampBrasilia(new Date());
+
+          // Attachments (imagens)
+          var atts = extractAttachments(m);
+          if (atts && atts.length) {
+            atts.forEach(function (att) {
+              renderAttachmentBubble("agent", att, ts);
+            });
+          }
+
+          if (!text && !buttons.length) return;
 
           addBubble({
             from: "agent",
@@ -1107,6 +1403,34 @@
       ) {
         closeConfirmClose();
       }
+    });
+
+    // Anexo de arquivo
+    elAttachBtn.addEventListener("click", function () {
+      elFileInput.value = "";
+      elFileInput.click();
+    });
+
+    elFileInput.addEventListener("change", function () {
+      var files = Array.prototype.slice.call(elFileInput.files || []);
+      if (!files.length) return;
+
+      var caption = elInput.value.trim();
+      elInput.value = "";
+
+      // Preview local para o cliente ver imediatamente
+      files.forEach(function (file) {
+        if (file.type && file.type.indexOf("image") === 0) {
+          var localUrl = URL.createObjectURL(file);
+          renderAttachmentBubble("customer", {
+            url: localUrl,
+            mime: file.type,
+            filename: file.name,
+          }, formatTimestampBrasilia(new Date()));
+        }
+      });
+
+      uploadImages(files, caption);
     });
 
     elSend.addEventListener("click", function () {
