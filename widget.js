@@ -356,6 +356,78 @@
       display: block;\
       cursor: pointer;\
     }\
+    #gc-webchat-root .bubble .fileBlock {\
+      display: flex;\
+      align-items: center;\
+      gap: 8px;\
+      padding: 6px 0;\
+      cursor: pointer;\
+      text-decoration: none;\
+      color: inherit;\
+    }\
+    #gc-webchat-root .bubble .fileBlock .fileIcon {\
+      font-size: 28px;\
+      line-height: 1;\
+      flex-shrink: 0;\
+    }\
+    #gc-webchat-root .bubble .fileBlock .fileName {\
+      font-size: 13px;\
+      font-weight: 500;\
+      overflow: hidden;\
+      text-overflow: ellipsis;\
+      white-space: nowrap;\
+    }\
+\
+    #gc-webchat-root #previewBar {\
+      display: none;\
+      flex: 0 0 auto;\
+      border-top: 1px solid var(--g-border);\
+      padding: 8px 10px;\
+      background: #fafafa;\
+      gap: 8px;\
+      align-items: center;\
+      overflow-x: auto;\
+    }\
+    #gc-webchat-root #previewBar.active { display: flex; }\
+    #gc-webchat-root .previewThumb {\
+      position: relative;\
+      flex-shrink: 0;\
+    }\
+    #gc-webchat-root .previewThumb img {\
+      width: 56px;\
+      height: 56px;\
+      object-fit: cover;\
+      border-radius: 8px;\
+      border: 1px solid var(--g-border);\
+    }\
+    #gc-webchat-root .previewThumb .pdfThumb {\
+      width: 56px;\
+      height: 56px;\
+      border-radius: 8px;\
+      border: 1px solid var(--g-border);\
+      background: #f5f5f5;\
+      display: grid;\
+      place-items: center;\
+      font-size: 11px;\
+      font-weight: 700;\
+      color: #c00;\
+    }\
+    #gc-webchat-root .previewThumb .removeThumb {\
+      position: absolute;\
+      top: -6px;\
+      right: -6px;\
+      width: 20px;\
+      height: 20px;\
+      border-radius: 50%;\
+      background: rgba(0,0,0,.6);\
+      color: #fff;\
+      border: none;\
+      cursor: pointer;\
+      font-size: 12px;\
+      line-height: 20px;\
+      text-align: center;\
+      padding: 0;\
+    }\
 \
     #gc-webchat-root #confirmOverlay {\
       position: fixed;\
@@ -436,9 +508,10 @@
       "  </header>" +
       '  <div id="chatMessages"></div>' +
       '  <div id="typing">' + T_TYPING + "</div>" +
+      '  <div id="previewBar"></div>' +
       '  <footer id="chatComposer">' +
       '    <button id="attachBtn" aria-label="Anexar arquivo" type="button">\ud83d\udcce</button>' +
-      '    <input id="fileInput" type="file" accept="image/*" multiple />' +
+      '    <input id="fileInput" type="file" accept="image/*,.pdf,application/pdf" multiple />' +
       '    <input id="chatInput" placeholder="' + T_PLACEHOLDER + '" />' +
       '    <button id="sendBtn">' + T_SEND + "</button>" +
       "  </footer>" +
@@ -469,6 +542,7 @@
     var elConfirmClose = root.querySelector("#confirmClose");
     var elAttachBtn = root.querySelector("#attachBtn");
     var elFileInput = root.querySelector("#fileInput");
+    var elPreviewBar = root.querySelector("#previewBar");
 
     var seenMsgIds = new Set();
     var introShown = false;
@@ -476,6 +550,9 @@
     // Upload state
     var uploadBatch = [];  // { key, fileName, done, el }
     var uploadCaption = "";
+
+    // Pending files (aguardando envio)
+    var pendingFiles = [];
 
     var state = {
       ready: false,
@@ -800,8 +877,16 @@
       if (!Array.isArray(atts)) atts = [];
       return atts.filter(function (a) {
         var type = String(a.contentType || a.type || "").toLowerCase();
-        return type === "attachment" || a.url || a.mediaUrl || (a.mime && a.mime.indexOf("image") === 0);
+        var mime = String(a.mime || a.mediaType || "").toLowerCase();
+        return type === "attachment" || a.url || a.mediaUrl ||
+          mime.indexOf("image") === 0 || mime.indexOf("application/pdf") === 0;
       });
+    }
+
+    function isPdfAttachment(att) {
+      var mime = String(att.mime || att.mediaType || att.contentType || "").toLowerCase();
+      var name = String(att.filename || att.name || "").toLowerCase();
+      return mime.indexOf("pdf") !== -1 || name.indexOf(".pdf") !== -1;
     }
 
     function renderAttachmentBubble(from, att, ts) {
@@ -843,13 +928,47 @@
         elMsgs.appendChild(row);
         elMsgs.scrollTop = elMsgs.scrollHeight;
       } else {
-        // Arquivo não-imagem: renderiza como link
-        var fileName = att.filename || att.name || "Arquivo";
-        addBubble({
-          from: from,
-          text: fileName + "\n" + url,
-          time: ts,
-        });
+        // PDF ou outro arquivo: renderiza como bloco clicável
+        var fName = att.filename || att.name || "Arquivo";
+        var icon = isPdfAttachment(att) ? "\ud83d\udcc4" : "\ud83d\udcce";
+
+        var row2 = document.createElement("div");
+        row2.className = "msgRow " + from;
+
+        var wrap2 = document.createElement("div");
+
+        var bubble2 = document.createElement("div");
+        bubble2.className = "bubble";
+
+        var link = document.createElement("a");
+        link.className = "fileBlock";
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+
+        var iconEl = document.createElement("span");
+        iconEl.className = "fileIcon";
+        iconEl.textContent = icon;
+
+        var nameEl = document.createElement("span");
+        nameEl.className = "fileName";
+        nameEl.textContent = fName;
+
+        link.appendChild(iconEl);
+        link.appendChild(nameEl);
+        bubble2.appendChild(link);
+
+        var meta2 = document.createElement("div");
+        meta2.className = "meta";
+        meta2.textContent = ts || formatTimestampBrasilia(new Date());
+
+        addToTranscript(from, "[arquivo] " + fName + " " + url, meta2.textContent);
+
+        wrap2.appendChild(bubble2);
+        wrap2.appendChild(meta2);
+        row2.appendChild(wrap2);
+        elMsgs.appendChild(row2);
+        elMsgs.scrollTop = elMsgs.scrollHeight;
       }
     }
 
@@ -1405,7 +1524,55 @@
       }
     });
 
-    // Anexo de arquivo
+    // ===== Preview de imagens pendentes =====
+    function updatePreviewBar() {
+      elPreviewBar.innerHTML = "";
+      if (!pendingFiles.length) {
+        elPreviewBar.classList.remove("active");
+        return;
+      }
+      elPreviewBar.classList.add("active");
+
+      pendingFiles.forEach(function (file, idx) {
+        var thumb = document.createElement("div");
+        thumb.className = "previewThumb";
+
+        var isImage = file.type && file.type.indexOf("image") === 0;
+        var previewEl;
+
+        if (isImage) {
+          previewEl = document.createElement("img");
+          previewEl.src = URL.createObjectURL(file);
+          previewEl.alt = file.name;
+        } else {
+          // PDF ou outro arquivo
+          previewEl = document.createElement("div");
+          previewEl.className = "pdfThumb";
+          previewEl.textContent = "PDF";
+        }
+
+        var removeBtn = document.createElement("button");
+        removeBtn.className = "removeThumb";
+        removeBtn.type = "button";
+        removeBtn.textContent = "\u00d7";
+        removeBtn.addEventListener("click", function () {
+          if (isImage && previewEl.src) URL.revokeObjectURL(previewEl.src);
+          pendingFiles.splice(idx, 1);
+          updatePreviewBar();
+        });
+
+        thumb.appendChild(previewEl);
+        thumb.appendChild(removeBtn);
+        elPreviewBar.appendChild(thumb);
+      });
+    }
+
+    function clearPendingFiles() {
+      pendingFiles = [];
+      updatePreviewBar();
+    }
+
+    // Anexo de arquivo — só adiciona ao preview
     elAttachBtn.addEventListener("click", function () {
       elFileInput.value = "";
       elFileInput.click();
@@ -1415,28 +1582,40 @@
       var files = Array.prototype.slice.call(elFileInput.files || []);
       if (!files.length) return;
 
-      var caption = elInput.value.trim();
+      files.forEach(function (f) { pendingFiles.push(f); });
+      updatePreviewBar();
+      elInput.focus();
+    });
+
+    // Enviar — texto e/ou imagens pendentes
+    elSend.addEventListener("click", function () {
+      var text = elInput.value;
       elInput.value = "";
 
-      // Preview local para o cliente ver imediatamente
-      files.forEach(function (file) {
-        if (file.type && file.type.indexOf("image") === 0) {
+      var hasFiles = pendingFiles.length > 0;
+      var hasText = text && text.trim();
+
+      if (!hasFiles && !hasText) return;
+
+      if (hasFiles) {
+        // Mostra preview como bolha do cliente
+        var now = formatTimestampBrasilia(new Date());
+        pendingFiles.forEach(function (file) {
           var localUrl = URL.createObjectURL(file);
           renderAttachmentBubble("customer", {
             url: localUrl,
             mime: file.type,
             filename: file.name,
-          }, formatTimestampBrasilia(new Date()));
-        }
-      });
+          }, now);
+        });
 
-      uploadImages(files, caption);
-    });
-
-    elSend.addEventListener("click", function () {
-      var text = elInput.value;
-      elInput.value = "";
-      sendTextMessage(text);
+        var filesToSend = pendingFiles.slice();
+        var caption = hasText ? text.trim() : "";
+        clearPendingFiles();
+        uploadImages(filesToSend, caption);
+      } else {
+        sendTextMessage(text);
+      }
     });
 
     elInput.addEventListener("keydown", function (e) {
