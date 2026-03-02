@@ -32,6 +32,10 @@
   var T_CLOSE_CANCEL  = cfg("close-cancel", "Cancelar");
   var T_END_NOTICE    = cfg("end-notice", "A sua conversa foi finalizada");
 
+  // Genesys
+  var G_DEPLOYMENT_ID = cfg("deployment-id", "1fc215de-9fc1-483d-82a3-ce7c1fd29326");
+  var G_ENVIRONMENT   = cfg("environment", "prod-sae1");
+
   // ===== 1. Injetar Genesys bootstrap =====
   (function (g, e, n, es, ys) {
     g["_genesysJs"] = e;
@@ -52,8 +56,8 @@
     "Genesys",
     "https://apps.sae1.pure.cloud/genesys-bootstrap/genesys.min.js",
     {
-      environment: "prod-sae1",
-      deploymentId: "1fc215de-9fc1-483d-82a3-ce7c1fd29326",
+      environment: G_ENVIRONMENT,
+      deploymentId: G_DEPLOYMENT_ID,
     }
   );
 
