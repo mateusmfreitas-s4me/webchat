@@ -15,6 +15,10 @@
   // Cores
   var C_PRIMARY            = cfg("primary", "#202AD0");
   var C_LAUNCHER           = cfg("launcher-color", "#66E7E5");
+
+  // Launcher
+  var L_SHAPE = cfg("launcher-shape", "drop"); // drop, circle, square, rounded
+  var L_SIZE  = cfg("launcher-size", "68");
   var C_BUBBLE_AGENT       = cfg("bubble-agent", "#f2f3f5");
   var C_BUBBLE_AGENT_TEXT  = cfg("bubble-agent-text", "#111");
   var C_BUBBLE_CUSTOMER_TEXT = cfg("bubble-customer-text", "#fff");
@@ -62,6 +66,16 @@
   );
 
   // ===== 2. Injetar CSS =====
+  var launcherRadiusMap = {
+    drop: "50% 90% 90% 90% / 40% 100% 100% 100%",
+    circle: "50%",
+    square: "0",
+    rounded: "16px"
+  };
+  var launcherRadius = launcherRadiusMap[L_SHAPE] || launcherRadiusMap.drop;
+  var launcherPx = parseInt(L_SIZE, 10) || 68;
+  var launcherImgPx = Math.round(launcherPx * 0.5);
+
   var css = "\
     #gc-webchat-root {\
       --g-bg: #fff;\
@@ -83,10 +97,10 @@
       position: fixed;\
       right: 20px;\
       bottom: 20px;\
-      width: 68px;\
-      height: 60px;\
+      width: " + launcherPx + "px;\
+      height: " + launcherPx + "px;\
       background: " + C_LAUNCHER + ";\
-      border-radius: 50% 90% 90% 90% / 40% 100% 100% 100%;\
+      border-radius: " + launcherRadius + ";\
       display: grid;\
       place-items: center;\
       border: none;\
@@ -97,8 +111,8 @@
     }\
     #gc-webchat-root #myLauncher:active { transform: translateY(1px); }\
     #gc-webchat-root #myLauncher img {\
-      width: 34px;\
-      height: 34px;\
+      width: " + launcherImgPx + "px;\
+      height: " + launcherImgPx + "px;\
       display: block;\
       object-fit: contain;\
     }\
